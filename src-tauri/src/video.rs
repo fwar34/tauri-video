@@ -1,6 +1,6 @@
-use std::{io, path::Path};
+use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use ffmpeg_next::{format, codec};
+use ffmpeg_next::{codec, device::input::video, format};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -26,12 +26,20 @@ pub async fn start(video_path: &str) -> Result<(), VideoError>
 {
     let video_path = Path::new(video_path);
     if !std::path::Path::exists(video_path) {
-        return Error(VideoError::FileNotFound("找不到文件".to_string()));
+        return Err(VideoError::FileNotFound("找不到文件".to_string()));
     }
 
-    if let Err(e) = ffmpeg_next::init() {
-        
+    if let ffmpeg_next::Error(e) = ffmpeg_next::init() {
+        return Err(e);
     }
+
+    let result= ffmpeg_next::format::input(&video_path);
+    let ictx = match result {
+        Ok(ictx) => ictx,
+        ffmpeg_next::Error(e) => return Err(e),
+    };
+
+
 
     Ok(())
 }
