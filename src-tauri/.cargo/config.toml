@@ -1,0 +1,7 @@
+# 使用 MSYS2 UCRT64 的 GNU 工具链构建 x86_64-pc-windows-gnu
+# 需要先安装工具链： rustup toolchain install stable-x86_64-pc-windows-gnu
+# 只有显式指定 gnu 目标（cargo +stable-x86_64-pc-windows-gnu build / rustup override set）时才会生效，
+# 不影响默认的 MSVC 构建。
+[target.x86_64-pc-windows-gnu]
+linker = "M:/msys64/ucrt64/bin/x86_64-w64-mingw32-gcc.exe"
+ar = "M:/msys64/ucrt64/bin/ar.exe"

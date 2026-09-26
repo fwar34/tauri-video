@@ -12,7 +12,10 @@ edition = "2021"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "tauri_video_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# 桌面端只需要 rlib；windows-gnu (MSYS2) 下 cdylib 会因导出序号溢出导致链接失败
+# （ld: error: export ordinal too large）。若之后要打包 Android/iOS，再放回
+# ["staticlib", "cdylib", "rlib"] 并使用 MSVC 工具链。
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -20,12 +23,15 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = "1.53.1"
-ffmpeg-next = "9.0.0"
+tokio = { version = "1.53.1", features = ["process", "io-util", "macros"] }
 thiserror = "2.0.21"
 
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
