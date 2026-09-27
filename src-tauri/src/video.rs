@@ -4,8 +4,11 @@ use std::process::Stdio;
 
 use serde::Serialize;
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::{join, select};
 use tokio::process::Command;
+use tokio::sync::mpsc;
+use tauri::ipc::{Channel, Response};
 
 /// FFmpeg 不在 `PATH` 中时，依次尝试这些常见安装目录。
 const FALLBACK_DIRS: [&str; 3] = [
@@ -30,6 +33,8 @@ pub enum VideoError {
         code: i32,
         stderr: String,
     },
+    #[error("tauri 错误")]
+    TauriError(#[from] tauri::Error),
 }
 
 impl Serialize for VideoError {
@@ -227,8 +232,90 @@ pub async fn probe(video_path: &Path) -> Result<MediaInfo, VideoError> {
     })
 }
 
+enum MessageType {
+    Connected(String),
+    DisConnected(String),
+    Data(Vec<u8>),
+}
+
+struct Message(MessageType);
+
+async fn ffmpeg_flv(video_path: &str, on_chunk: Channel<Response>) -> Result<(), VideoError> {
+    let (tx, rs) = mpsc::channel::<Message>(100);
+
+    let ffmpeg = resolve_program("ffmpeg")?;
+    let input = video_path;
+
+    let mut command = Command::new(ffmpeg)
+        .args([
+            "-f", "h264",
+            "-i", &input,
+            "-c:v", "copy",
+            "-bsf:v", "h264_mp4toannexb",
+            "-f", "h264",
+            "pipe:1"
+            ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+
+    let out = command.stdout.take().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::BrokenPipe, format!("无法读取 ffmpeg 的 stdout"))
+    })?;
+
+    let err = command.stderr.take().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::BrokenPipe, format!("无法读取 ffmpeg 的 stderr"))
+    })?;
+
+    let mut stdout_open = true;
+    let mut stderr_open = true;
+    let mut out_reader = BufReader::new(out);
+    let mut err_reader = BufReader::new(err);
+
+    let mut buf = vec![0u8; 4096];
+    let mut line_string = String::new();
+    while stdout_open || stderr_open {
+        select! {
+            // 读取 stdout 二进制块
+            res = out_reader.read(&mut buf), if stdout_open => {
+                match res {
+                    Ok(0) => {
+                        stdout_open = false;
+                        break;
+                    },
+                    Ok(n) => {
+                        on_chunk.send(Response::new(buf[..n].to_vec()))?;
+                    },
+                    Err(e) => {
+                        eprintln!("stdout err: {e}");
+                        stdout_open = false;
+                    },
+                }
+            }
+            
+            // 读取 stderr 一行
+            res = err_reader.read_line(&mut line_string), if stderr_open => {
+                match res {
+                    Ok(0) => stderr_open = false,
+                    Ok(_) => {
+                        eprintln!("ffmpeg {}", line_string.trim_end());
+                        line_string.clear();
+                    },
+                    Err(e) => {
+                        stderr_open = false;
+                        eprintln!("stderr err: {e}")
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// 校验文件存在并读取基本信息，作为播放 / 处理前的准备步骤。
-pub async fn start(video_path: &str) -> Result<MediaInfo, VideoError> {
+pub async fn start(video_path: &str, on_chunk: Channel<Response>) -> Result<MediaInfo, VideoError> {
     let path = Path::new(video_path);
     if !path.is_file() {
         return Err(VideoError::FileNotFound(video_path.to_string()));
@@ -244,6 +331,8 @@ pub async fn start(video_path: &str) -> Result<MediaInfo, VideoError> {
         info.video_codec.as_deref().unwrap_or("无"),
         info.audio_codec.as_deref().unwrap_or("无"),
     );
+
+    ffmpeg_flv(video_path, on_chunk).await;
 
     Ok(info)
 }

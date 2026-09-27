@@ -1,3 +1,5 @@
+use tauri::ipc::{Response, Channel};
+
 pub mod video;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -7,8 +9,8 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-async fn start(video_path: String) -> Result<video::MediaInfo, video::VideoError> {
-    video::start(&video_path).await
+async fn start(video_path: String, on_chunk: Channel<Response>) -> Result<video::MediaInfo, video::VideoError> {
+    video::start(&video_path, on_chunk).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

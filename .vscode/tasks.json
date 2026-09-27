@@ -24,16 +24,14 @@
       "problemMatcher": {
         "owner": "vite",
         "severity": "error",
-        "pattern": [
-          {
-            "regexp": "^\\s*(?:error|Error|ERROR)\\s*[:：]?\\s*(.+)$",
-            "message": 1
-          }
-        ],
+        "pattern": {
+          "regexp": "^\\s*(?:error|Error|ERROR)\\s*[:：]?\\s*(.+)$",
+          "message": 1
+        },
         "background": {
           "activeOnStart": true,
-          "beginsPattern": "> *tauri-video@[0-9.]+ dev",
-          "endsPattern": "Local:\\s+http://localhost:1420"
+          "beginsPattern": "^>\\s*tauri-video@.*\\s+dev$",
+          "endsPattern": "^\\s*Local:\\s+http://localhost:1420/?\\s*$"
         }
       }
     },

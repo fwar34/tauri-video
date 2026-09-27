@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
 let greetInputEl: HTMLInputElement | null;
@@ -15,6 +15,27 @@ async function greet() {
       name: greetInputEl.value,
     });
   }
+}
+
+const canvas = $('canvas-video') as HTMLCanvasElement;
+const ctx = canvas.getContext('2d');
+let videoDecoder: VideoDecoder | null;
+let frameCount = 0
+
+function initDecoder() {
+  videoDecoder = new VideoDecoder({
+    output: (frame) => {
+      if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+        canvas.width = frame.displayWidth;
+        canvas.height = frame.displayHeight
+      }
+
+      ctx?.drawImage(frame, 0, 0);
+      frame.close();
+    },
+    error: (e) => console.log('VideoDecoder error:', e),
+  });
+
 }
 
 async function selectVideo() {
@@ -38,9 +59,26 @@ async function selectVideo() {
       if (videoPathEl) {
         videoPathEl.textContent = `Selected: ${selected}`;
       }
+
+      const onChunk = new Channel<ArrayBuffer>();
+      onChunk.onmessage = (buffer: ArrayBuffer) => {
+        if (!videoDecoder) {
+          return;
+        }
+
+        frameCount++;
+        const chunk = new EncodedVideoChunk({
+          type: frameCount == 1 ? 'key' : 'delta',
+          timestamp: frameCount * (1_000_000 / 30),
+          data: new Uint8Array(buffer),
+        });
+
+        videoDecoder.decode(chunk)
+      }
+
       
       // 2. 调用后端处理视频（示例）
-      await invoke("start", { videoPath: selected });
+      await invoke("start", { videoPath: selected, onChunk });
       
       // 3. 或者用于其他操作
       // - 预览视频
@@ -63,4 +101,5 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   $("select-video")?.addEventListener("click", selectVideo);
+  initDecoder();
 });
