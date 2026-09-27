@@ -62,5 +62,5 @@ window.addEventListener("DOMContentLoaded", () => {
     greet();
   });
 
-  document.getElementById("select-video")?.addEventListener("click", selectVideo);
+  $("select-video")?.addEventListener("click", selectVideo);
 });

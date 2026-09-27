@@ -1,0 +1,92 @@
+{
+  // 供 launch.json 的 preLaunchTask 使用，也可从「终端 → 运行任务」手动执行。
+  // ui:dev / ui:build 对应 src-tauri/tauri.conf.json 的 build.beforeDevCommand / beforeBuildCommand。
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ui:dev",
+      "detail": "启动 Vite 开发服务器（http://localhost:1420），不退出，供调试时后台常驻",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "dev"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      // 后台常驻任务：配合下面的 problemMatcher.background，
+      // VS Code 会在 Vite 打印出「Local: http://localhost:1420/」后才启动调试器。
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "tauri",
+        "clear": true
+      },
+      "problemMatcher": {
+        "owner": "vite",
+        "severity": "error",
+        "pattern": [
+          {
+            "regexp": "^\\s*(?:error|Error|ERROR)\\s*[:：]?\\s*(.+)$",
+            "message": 1
+          }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "> *tauri-video@[0-9.]+ dev",
+          "endsPattern": "Local:\\s+http://localhost:1420"
+        }
+      }
+    },
+    {
+      "label": "ui:build",
+      "detail": "前端生产构建（tsc 类型检查 + vite build）",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "build"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "tauri"
+      },
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "cargo:build",
+      "detail": "编译 Rust 后端（src-tauri）",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["build"],
+      "options": {
+        "cwd": "${workspaceFolder}/src-tauri"
+      },
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "tauri"
+      },
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "cargo:test",
+      "detail": "运行 Rust 测试（含 tests/ffmpeg_probe.rs，需要本机 ffmpeg/ffprobe）",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["test"],
+      "options": {
+        "cwd": "${workspaceFolder}/src-tauri"
+      },
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "tauri"
+      },
+      "problemMatcher": ["$rustc"]
+    }
+  ]
+}

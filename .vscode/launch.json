@@ -1,0 +1,72 @@
+{
+  // Tauri 调试配置（Rust 核心进程用 CodeLLDB，前端用 VS Code 内置的 js-debug）。
+  // 所需扩展已在本目录 extensions.json 的推荐列表里（vadimcn.vscode-lldb 等）。
+  // 配套任务定义见 .vscode/tasks.json，用法说明见 README.md 的「VS Code 调试配置」一节。
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // 日常开发用这个：先跑 ui:dev（npm run dev）再编译并启动 target/debug/tauri-video。
+      // 本项目的 cargo 构建都处于 dev 模式（未启用 tauri/custom-protocol 特性），
+      // 运行时会加载 tauri.conf.json 的 build.devUrl（http://localhost:1420），
+      // 所以必须让 Vite 跑着，否则窗口里是连接失败页面。
+      "name": "Tauri: 开发调试 (自动启动 Vite)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--manifest-path=./src-tauri/Cargo.toml"]
+      },
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["rust"],
+      "preLaunchTask": "ui:dev",
+      "env": {
+        // panic / abort 时打印完整 Rust 回溯
+        "RUST_BACKTRACE": "1",
+        // 仅 Linux/WebKitGTK：开启远程 Web 检查器，浏览器访问 http://127.0.0.1:2999
+        "WEBKIT_INSPECTOR_SERVER": "127.0.0.1:2999",
+        // 仅 Windows/WebView2：暴露 CDP 端口，供「Tauri: 前端调试」配置附加
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS": "--remote-debugging-port=9222"
+      }
+    },
+    {
+      // 已经在别的终端跑着 `npm run dev` 时用这个（Vite 配了 strictPort，
+      // 重复启动 ui:dev 会因端口 1420 被占用直接失败，从而中断调试启动）。
+      "name": "Tauri: 开发调试 (复用已启动的 Vite)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--manifest-path=./src-tauri/Cargo.toml"]
+      },
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["rust"],
+      "env": {
+        "RUST_BACKTRACE": "1",
+        "WEBKIT_INSPECTOR_SERVER": "127.0.0.1:2999",
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS": "--remote-debugging-port=9222"
+      }
+    },
+    {
+      // 附加到已在运行的进程（例如 npm run tauri dev 起的那个、或直接双击的 exe）。
+      // Linux 注意：Ubuntu 默认 kernel.yama.ptrace_scope=1，只允许附加子进程，
+      // 附加别人启动的进程会报 Operation not permitted，需先
+      // `sudo sysctl -w kernel.yama.ptrace_scope=0`。
+      "name": "Tauri: 附加到运行中的进程",
+      "type": "lldb",
+      "request": "attach",
+      "pid": "${command:pickProcess}",
+      "sourceLanguages": ["rust"]
+    },
+    {
+      // WebView（前端 TS 断点、控制台）调试。
+      // Windows/WebView2：上面的 launch 配置已注入 --remote-debugging-port=9222，选本项即可附加。
+      // Linux/WebKitGTK：不支持 CDP，无法用 VS Code 附加，请用浏览器打开
+      //   http://127.0.0.1:2999 进入 WebKit 检查器。
+      "name": "Tauri: 前端调试 (WebView2 / 仅 Windows)",
+      "type": "chrome",
+      "request": "attach",
+      "port": 9222,
+      "urlFilter": "http://localhost:1420/*",
+      "webRoot": "${workspaceFolder}",
+      "sourceMaps": true
+    }
+  ]
+}

@@ -78,6 +78,146 @@ cargo +stable-x86_64-pc-windows-gnu build --release --target x86_64-pc-windows-g
 - GNU 产出的 exe 只依赖系统 DLL + `WebView2Loader.dll`（Rust 已静态链接 mingw 运行库），
   无需额外分发 libgcc/libwinpthread 等 DLL。
 
+## Linux 构建依赖（Ubuntu / Debian）
+
+Linux 下 Tauri 需要 GTK3 / WebKitGTK 的**开发包**（即提供 `.pc` 文件、供 `pkg-config` 查询的那些
+`-dev` 包）。只装运行时库（例如 `libwebkit2gtk-4.1-0`）是不够的，`cargo build` 会在
+`gdk-sys` / `gobject-sys` 的 build script 阶段失败：
+
+```
+The system library `gdk-3.0` required by crate `gdk-sys` was not found.
+The file `gdk-3.0.pc` needs to be installed and the PKG_CONFIG_PATH environment variable
+must contain its parent directory.
+```
+
+按 Tauri 2 官方列表一次性装齐（Ubuntu 22.04 / 24.04 / 25.10 等通用）：
+
+```bash
+sudo apt update
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+```
+
+本项目未启用托盘（`tray-icon`）等特性，因此最小依赖其实只有
+`libwebkit2gtk-4.1-dev`（会自动带上 `libgtk-3-dev`、`libsoup-3.0-dev`、
+`libjavascriptcoregtk-4.1-dev`）加 `build-essential`；想与官方文档保持一致就装上面那一串。
+
+安装后自检：
+
+```bash
+pkg-config --exists webkit2gtk-4.1 && echo OK
+```
+
+（`libxdo-dev` / `librsvg2-dev` / `libayatana-appindicator3-dev` 只在启用
+`tauri/tray-icon`、`linux-libxdo` 等特性时才被链接，本项目的 `tauri = { version = "2", features = [] }`
+用不到，但装上不会有副作用。）
+
+### 运行时的 ffprobe
+
+发行版的 `ffmpeg` 包会同时提供 `/usr/bin/ffmpeg` 与 `/usr/bin/ffprobe`：
+
+```bash
+sudo apt install ffmpeg
+```
+
+如果用的是 **snap 版 ffmpeg**，它只注册了 `ffmpeg`、`ffmpeg.ffplay`、`ffmpeg.ffprobe`
+三个命令名，**没有 `ffprobe`**；而 `video.rs` 是按名字（`ffprobe`）查找可执行文件的，
+于是 `start` 命令会返回 `未找到 ffprobe…`。两种解决办法：
+
+1. 装发行版 ffmpeg（推荐，顺带避免 snap 与 apt 两份 ffmpeg 混用）；
+2. 或用软链接补上正确的名字（`~/.local/bin` 通常在 `PATH` 中）：
+
+```bash
+mkdir -p ~/.local/bin
+ln -sf /snap/bin/ffmpeg.ffprobe ~/.local/bin/ffprobe
+```
+
+也可以按上一节的方式，把 `FFMPEG_PATH` 指向同时含 `ffmpeg` 与 `ffprobe` 的目录。
+
+### 首次运行
+
+前端依赖同样要装（仓库里没有 `node_modules/`）：
+
+```bash
+npm install
+npm run tauri dev
+```
+
+只跑 `cargo run` / `cargo build` 时不会加 `custom-protocol` 特性，Tauri 会按
+`build.devUrl` 去加载 `http://localhost:1420`，所以需要另开一个终端跑 `npm run dev`；
+用 `npm run tauri dev` 则两步一次完成。
+
+在 Linux 上运行 Rust 测试：
+
+```bash
+cd src-tauri
+cargo test
+```
+
+（`tests/ffmpeg_probe.rs` 会调用本机 ffmpeg 生成 1 秒样片再交给 ffprobe 解析；
+本机完全没有 ffmpeg 时该用例会打印提示并跳过。注意“有 ffmpeg 但没有 ffprobe”
+**不会**跳过，`probe_reads_generated_video` 会以 `ExecutableNotFound("ffprobe")` 失败。）
+
+## VS Code 调试配置
+
+仓库自带 `.vscode/launch.json` + `.vscode/tasks.json`（`.gitignore` 里已为这两个文件加了白名单）。
+Rust 侧用 **CodeLLDB**（`vadimcn.vscode-lldb`，已在 `.vscode/extensions.json` 的推荐列表里），
+前端侧用 VS Code 内置的 js-debug，都不需要额外装东西。按 `F5`（或调试面板）选择配置即可，
+可以直接在 `src-tauri/src/*.rs` 里打断点、单步、查看变量。
+
+| 配置 | 用途 |
+| --- | --- |
+| `Tauri: 开发调试 (自动启动 Vite)` | 先执行任务 `ui:dev`（即 `npm run dev`），再编译并启动 `src-tauri/target/debug/tauri-video`。日常开发用这个 |
+| `Tauri: 开发调试 (复用已启动的 Vite)` | 已经在别的终端跑着 `npm run dev` 时用（Vite 配了 `strictPort`，重复启动会因 1420 被占用而失败） |
+| `Tauri: 附加到运行中的进程` | 附加到已经在跑的进程，例如 `npm run tauri dev` 起的那个（Linux 见下面的 `ptrace_scope` 说明） |
+| `Tauri: 前端调试 (WebView2 / 仅 Windows)` | 附加 WebView2 的 CDP 端口 9222，调试 `src/*.ts`、查看 WebView 控制台 |
+
+附带的任务（`终端 → 运行任务`）：`ui:dev`、`ui:build`、`cargo:build`、`cargo:test`。
+两个 `launch` 配置还注入了 `RUST_BACKTRACE=1`（panic 时打印完整回溯）和
+`WEBKIT_INSPECTOR_SERVER=127.0.0.1:2999` / `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`
+（分别用于 Linux / Windows 的前端检查器，在另一个平台上是无害的空设置）。
+
+### 为什么 Rust 调试必须先起 Vite
+
+`tauri` crate 的 build script 里 `dev = !custom-protocol`（见 `tauri/src/build.rs`），
+而本项目的 `Cargo.toml` 没有定义 `custom-protocol` 特性、`tauri.conf.json` 里也没在
+`build.features` 中启用它，所以**直接 `cargo build` / `cargo build --release` 出来的可执行文件都是
+dev 模式**：启动时按 `build.devUrl` 去加载 `http://localhost:1420`。
+只有 Tauri CLI 打包时会启用 `tauri/custom-protocol` 把 `dist/` 内嵌进去（`npm run tauri build`），
+`npm run tauri dev` 则本来就是加载 devUrl。
+
+所以：用调试配置启动应用时，Vite 必须在跑；`preLaunchTask: ui:dev` 不能省，
+否则窗口里只会显示连接失败。（要调试“内嵌前端资源”的产物，请在 `cargo build` 的参数里加上
+`--features tauri/custom-protocol`，注意 `[profile.release]` 里 `strip = true`，release 断点基本不可用。）
+
+### 前端（WebView）调试
+
+- **Linux / WebKitGTK**：WebKitGTK 不支持 CDP，VS Code 无法附加。调试配置已设置
+  `WEBKIT_INSPECTOR_SERVER=127.0.0.1:2999`，用浏览器打开 `http://127.0.0.1:2999`
+  就是 WebKit 的检查器（等价于在窗口内右键 → 检查元素）。
+- **Windows / WebView2**：调试配置已设置 `--remote-debugging-port=9222`，
+  应用启动后选 `Tauri: 前端调试 (WebView2 / 仅 Windows)` 附加，即可对 `src/*.ts` 打断点
+  （`webRoot` 已指向仓库根目录，与 Vite 的路径一致）。
+
+### Linux 上附加到已有进程
+
+Ubuntu 默认 `kernel.yama.ptrace_scope=1`，只允许附加到自己的子进程，
+所以 `Tauri: 附加到运行中的进程` 附加别人（比如终端里 `npm run tauri dev`）启动的进程会报
+`Operation not permitted`，临时放开即可：
+
+```bash
+sudo sysctl -w kernel.yama.ptrace_scope=0
+```
+
+上面两个 `launch` 配置不受影响：被调试进程是调试器的子进程。
+
+### Windows 上换用 Visual Studio Windows Debugger（可选）
+
+装了 C/C++ 扩展与 VS 的调试器后，也可以把 `type` 换成 `cppvsdbg`，用
+`"program": "${workspaceFolder}/src-tauri/target/debug/tauri-video.exe"`，
+`preLaunchTask` 等其余字段不变；官方文档见
+<https://tauri.app/develop/debug/vscode/>。
+
 ## Recommended IDE Setup
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
