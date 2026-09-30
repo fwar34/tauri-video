@@ -241,18 +241,34 @@ enum MessageType {
 #[allow(dead_code)]
 struct Message(MessageType);
 
+fn find_all_start_codes(buf: &[u8], len: usize) -> Vec<(usize, usize)> {
+    let mut i = 0;
+    let mut results = Vec::new();
+    while i < len {
+        if i + 4 <= len && buf[i..i + 4] == [0x00, 0x00, 0x00, 0x01] {
+            results.push((i, 4));
+            i += 4;
+        } else if i + 3 <= len && buf[i..i+3] == [0x00, 0x00, 0x01] {
+            results.push((i, 3));
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    results
+}
+
 async fn ffmpeg_h264(video_path: &str, on_chunk: Channel<Response>) -> Result<(), VideoError> {
 
+    println!("ffmpeg_h264 enter...");
     let ffmpeg = resolve_program("ffmpeg")?;
 
     let mut command = Command::new(ffmpeg)
         .args([
-            "-f", "h264",
-            "-i", &video_path,
-            "-c:v", "copy",
-            "-bsf:v", "h264_mp4toannexb",
-            "-f", "h264",
-            "pipe:1"
+                "-i", &video_path,
+                "-c:v", "copy",
+                "-f", "h264",
+                "pipe:1"
             ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -272,19 +288,39 @@ async fn ffmpeg_h264(video_path: &str, on_chunk: Channel<Response>) -> Result<()
     let mut out_reader = BufReader::new(out);
     let mut err_reader = BufReader::new(err);
 
-    let mut buf = vec![0u8; 4096];
+    let mut buf = vec![0u8; 16384];
+    let mut buf_remain = 0usize;
     let mut line_string = String::new();
     while stdout_open || stderr_open {
         select! {
             // 读取 stdout 二进制块
-            res = out_reader.read(&mut buf), if stdout_open => {
+            res = out_reader.read(&mut buf[buf_remain..]), if stdout_open => {
+                println!("stdout read len:{}", res.as_ref().unwrap());
                 match res {
                     Ok(0) => {
                         stdout_open = false;
                         break;
                     },
                     Ok(n) => {
-                        on_chunk.send(Response::new(buf[..n].to_vec()))?;
+                        let results = find_all_start_codes(&buf, n + buf_remain);
+                        if results.is_empty() {
+                            eprintln!("can't find any start code in buf, read len:{n}, buf_remain:{buf_remain}");
+                            stdout_open = false;
+                            break;
+                        }
+
+                        for (i, result) in results.iter().enumerate() {
+                            if i == results.len() - 1 {
+                                buf_remain = n - result.0;
+                                if result.0 > 0 {
+                                    buf.rotate_left(result.0);
+                                }
+                                break;
+                            }
+                            let frame_data: &[u8] = &buf[result.0..result.0 + (results[i + 1].0 - result.0)];
+                            on_chunk.send(Response::new(frame_data.to_vec()))?;
+                            println!("on_chunk send data len:{}", frame_data.len());
+                        }
                     },
                     Err(e) => {
                         eprintln!("stdout err: {e}");

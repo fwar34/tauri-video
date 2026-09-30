@@ -5,15 +5,19 @@
   "tasks": [
     {
       "label": "ui:dev",
-      "detail": "启动 Vite 开发服务器（http://localhost:1420），不退出，供调试时后台常驻",
+      "detail": "只启动 Vite 开发服务器（http://localhost:1420），Tauri 应用交给调试器启动",
       "type": "shell",
       "command": "npm",
-      "args": ["run", "dev"],
+      "args": ["run", "dev", "--", "--clearScreen", "false"],
       "options": {
         "cwd": "${workspaceFolder}"
       },
       // 后台常驻任务：配合下面的 problemMatcher.background，
       // VS Code 会在 Vite 打印出「Local: http://localhost:1420/」后才启动调试器。
+      // 注意此处只跑 `vite`，不能跑 `npm run tauri dev`：后者会自己编译并启动
+      // target/debug 下的应用，和调试器启动的是同一份二进制、同一个窗口标识，
+      // 结果是前台窗口属于 tauri dev 的进程，Rust 断点永远不命中。
+      // 另外 --clearScreen false 防止 Vite 用清屏序列把横幅冲掉（否则匹配器扫不到那行）。
       "isBackground": true,
       "presentation": {
         "reveal": "always",
@@ -30,8 +34,13 @@
         },
         "background": {
           "activeOnStart": true,
-          "beginsPattern": "^>\\s*tauri-video@.*\\s+dev$",
-          "endsPattern": "^\\s*Local:\\s+http://localhost:1420/?\\s*$"
+          // Vite 8 的启动横幅实际是带 ANSI 颜色、以 `\n  ` 开头的
+          // `VITE v8.0.16  ready in 300 ms`，用 .* 兜住行首的转义与空白。
+          "beginsPattern": ".*VITE\\s+v[\\d.]+.*",
+          // Vite 8 打印的是 `  ➜  Local:   http://localhost:1420/`：
+          // 行首是 ➜（\\s 不匹配它），`Local:` 后是 3 个空格，所以必须用 .* 前缀
+          // 且不能把空格数写死。
+          "endsPattern": ".*Local:\\s*https?://localhost:1420/?.*"
         }
       }
     },
