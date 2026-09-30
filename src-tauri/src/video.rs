@@ -5,9 +5,8 @@ use std::process::Stdio;
 use serde::Serialize;
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use tokio::{join, select};
+use tokio::select;
 use tokio::process::Command;
-use tokio::sync::mpsc;
 use tauri::ipc::{Channel, Response};
 
 /// FFmpeg 不在 `PATH` 中时，依次尝试这些常见安装目录。
@@ -232,24 +231,24 @@ pub async fn probe(video_path: &Path) -> Result<MediaInfo, VideoError> {
     })
 }
 
+#[allow(dead_code)]
 enum MessageType {
     Connected(String),
     DisConnected(String),
     Data(Vec<u8>),
 }
 
+#[allow(dead_code)]
 struct Message(MessageType);
 
-async fn ffmpeg_flv(video_path: &str, on_chunk: Channel<Response>) -> Result<(), VideoError> {
-    let (tx, rs) = mpsc::channel::<Message>(100);
+async fn ffmpeg_h264(video_path: &str, on_chunk: Channel<Response>) -> Result<(), VideoError> {
 
     let ffmpeg = resolve_program("ffmpeg")?;
-    let input = video_path;
 
     let mut command = Command::new(ffmpeg)
         .args([
             "-f", "h264",
-            "-i", &input,
+            "-i", &video_path,
             "-c:v", "copy",
             "-bsf:v", "h264_mp4toannexb",
             "-f", "h264",
@@ -311,6 +310,8 @@ async fn ffmpeg_flv(video_path: &str, on_chunk: Channel<Response>) -> Result<(),
         }
     }
 
+    command.wait().await?;
+
     Ok(())
 }
 
@@ -332,7 +333,7 @@ pub async fn start(video_path: &str, on_chunk: Channel<Response>) -> Result<Medi
         info.audio_codec.as_deref().unwrap_or("无"),
     );
 
-    ffmpeg_flv(video_path, on_chunk).await;
+    ffmpeg_h264(video_path, on_chunk).await?;
 
     Ok(info)
 }

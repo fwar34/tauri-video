@@ -35,7 +35,11 @@ function initDecoder() {
     },
     error: (e) => console.log('VideoDecoder error:', e),
   });
-
+  if (videoDecoder === null) {
+    console.log('failed to create VideoDecoder');
+    return;
+  }
+  videoDecoder.configure({codec: 'avc1.42E01E', optimizeForLatency: true});
 }
 
 async function selectVideo() {
