@@ -42,8 +42,33 @@ function initDecoder() {
   videoDecoder.configure({codec: 'avc1.42E01E', optimizeForLatency: true});
 }
 
+/**
+ * 判断一段 Annex-B 数据里是否含有 IDR 帧（nal_unit_type == 5）。
+ *
+ * H.264 NAL 头是一个字节：forbidden_zero_bit(1) + nal_ref_idc(2) + nal_unit_type(5)，
+ * 所以 type 就是 `byte & 0x1F`。只认 IDR，因为 SPS/PPS/SEI 虽然也是关键帧的
+ * 组成部分，但单独一个 SPS 不能作为 key frame 提交。
+ */
+function isKeyFrame(data: Uint8Array): boolean {
+  for (let i = 0; i + 3 < data.length; i++) {
+    const isFourByte = data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 0 && data[i + 3] === 1;
+    const isThreeByte = data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 1;
+    if (isFourByte || isThreeByte) {
+      const headerIndex = i + (isFourByte ? 4 : 3);
+      if (headerIndex < data.length && (data[headerIndex] & 0x1f) === 5) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 async function selectVideo() {
   try {
+    // 每次重新选片都要重置：frameCount 之前是模块级且从不清零，
+    // 第二次拦截会继承上次的计数，帧类型和时间戳就全错了。
+    frameCount = 0;
+
     const selected = await open({
       multiple: false,
       filters: [
@@ -66,18 +91,31 @@ async function selectVideo() {
 
       const onChunk = new Channel<ArrayBuffer>();
       onChunk.onmessage = (buffer: ArrayBuffer) => {
-        if (!videoDecoder) {
-          return;
+        // 这个回调里抛出的任何异常都会中断 Channel 的分派器，
+        // 同一批里后面的消息会全部丢失，所以整体包一层 try/catch。
+        try {
+          if (!videoDecoder) {
+            return;
+          }
+
+          console.log(`buffer len:${buffer.byteLength}`);
+
+          frameCount++;
+          const bytes = new Uint8Array(buffer);
+          const chunk = new EncodedVideoChunk({
+            // 靠 NAL 类型判断关键帧，比用计数器可靠：
+            // 计数器在换视频时不重置，会把新视频的首帧标成 delta。
+            type: isKeyFrame(bytes) ? 'key' : 'delta',
+            timestamp: frameCount * (1_000_000 / 30),
+            data: bytes,
+          });
+
+          if (videoDecoder.state === 'configured') {
+            videoDecoder.decode(chunk);
+          }
+        } catch (e) {
+          console.error('onmessage 处理失败:', e);
         }
-
-        frameCount++;
-        const chunk = new EncodedVideoChunk({
-          type: frameCount == 1 ? 'key' : 'delta',
-          timestamp: frameCount * (1_000_000 / 30),
-          data: new Uint8Array(buffer),
-        });
-
-        videoDecoder.decode(chunk)
       }
 
       
